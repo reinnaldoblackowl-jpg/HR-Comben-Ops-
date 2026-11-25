@@ -1,103 +1,152 @@
-const roles = {
-  coordinator: 'Koordinasi pekerjaan HR dan review laporan',
-  payroll: 'Validasi payroll dan rekonsiliasi selisih',
-  benefit: 'Administrasi benefit dan simulasi biaya',
-  compensation: 'Analisis struktur upah dan manpower cost',
-  admin: 'Administrasi kontrak dan employee movement',
-  attendance: 'Validasi absensi, cuti dan overtime',
-  analyst: 'Analisis headcount, turnover dan reporting'
-};
+const VERSION = "1.2.0";
 
-const MODEL = '@cf/meta/llama-3.3-70b-instruct-fp8-fast';
+const MODEL = "@cf/meta/llama-3.3-70b-instruct-fp8-fast";
+
+const roles = {
+  coordinator: "Koordinasi pekerjaan HR dan review laporan",
+  payroll: "Validasi payroll dan rekonsiliasi selisih",
+  benefit: "Administrasi benefit dan simulasi biaya",
+  compensation: "Analisis struktur upah dan manpower cost",
+  admin: "Administrasi kontrak dan employee movement",
+  attendance: "Validasi absensi, cuti dan overtime",
+  analyst: "Analisis headcount, turnover dan reporting"
+};
 
 export default {
   async fetch(request, env) {
-    const url = new URL(request.url);
 
-    if (url.pathname !== '/api/task') {
-      return env.ASSETS.fetch(request);
-    }
+    const url = new URL(request.url);
 
     const out = (data, status = 200) =>
       Response.json(data, {
         status,
         headers: {
-          'Cache-Control': 'no-store'
+          "Cache-Control": "no-store"
         }
       });
 
-    if (request.method !== 'POST') {
-      return out({ error: 'Method not allowed' }, 405);
+    // SYSTEM VERSION
+    if (url.pathname === "/api/health") {
+      return out({
+        system: "Black Owl HR Virtual Office",
+        version: VERSION,
+        status: "Online"
+      });
+    }
+
+    if (url.pathname !== "/api/task") {
+      return env.ASSETS.fetch(request);
+    }
+
+    if (request.method !== "POST") {
+      return out({
+        error: "Method not allowed"
+      }, 405);
     }
 
     if (!env.PILOT_TOKEN) {
       return out({
-        error: 'PILOT_TOKEN belum dikonfigurasi.'
+        error: "PILOT_TOKEN belum tersedia."
       }, 503);
     }
 
     if (
-      request.headers.get('Authorization') !==
+      request.headers.get("Authorization") !==
       `Bearer ${env.PILOT_TOKEN}`
     ) {
       return out({
-        error: 'Kode akses tidak sesuai.'
+        error: "Kode Pilot Token tidak sesuai."
       }, 401);
     }
 
-    if (!env.AI) {
+    if (!env.AI || typeof env.AI.run !== "function") {
       return out({
-        error: 'Workers AI binding belum tersedia.'
+        error: "Workers AI Binding tidak tersedia."
       }, 503);
     }
 
-    try {
-      const { agent, task } = await request.json();
+    let body;
 
-      if (
-        !Object.hasOwn(roles, agent) ||
-        typeof task !== 'string' ||
-        !task.trim() ||
-        task.length > 3000
-      ) {
-        return out({
-          error: 'Instruksi tidak valid.'
-        }, 400);
-      }
+    try {
+      body = await request.json();
+    } catch {
+      return out({
+        error: "Format request tidak valid."
+      }, 400);
+    }
+
+    const { agent, task } = body || {};
+
+    if (
+      !Object.hasOwn(roles, agent) ||
+      typeof task !== "string" ||
+      !task.trim() ||
+      task.length > 3000
+    ) {
+      return out({
+        error: "Instruksi atau agent tidak valid."
+      }, 400);
+    }
+
+    try {
 
       const result = await env.AI.run(MODEL, {
         messages: [
           {
-            role: 'system',
-            content: `Anda adalah AI Agent Black Owl HR Virtual Office.
+            role: "system",
+            content: `
+Anda adalah AI Agent Black Owl HR Virtual Office.
 Spesialisasi: ${roles[agent]}.
-Gunakan bahasa Indonesia yang profesional.
+Gunakan bahasa Indonesia profesional.
 Gunakan data simulasi saja.
-Jangan mengarang angka atau mengklaim akses database.
-Jika data kurang, jelaskan data yang diperlukan.
-Jangan menyetujui payroll atau mengubah data.
-Seluruh hasil merupakan draft untuk review manusia.`
+Jangan mengarang data perusahaan.
+Jangan mengklaim akses database.
+Jangan mengubah data atau menyetujui payroll.
+Hasil merupakan draft untuk review manusia.
+`
           },
           {
-            role: 'user',
+            role: "user",
             content: task
           }
         ],
-        max_tokens: 900
+        max_tokens: 512
       });
 
-      console.log('AI task completed:', agent, MODEL);
+      if (
+        typeof result?.response !== "string" ||
+        !result.response.trim()
+      ) {
+        return out({
+          error: "AI terhubung tetapi tidak menghasilkan teks."
+        }, 502);
+      }
 
       return out({
-        output: result.response ||
-          'Model tidak menghasilkan teks.'
+        version: VERSION,
+        model: MODEL,
+        output: result.response
       });
 
     } catch (error) {
-      console.error('WORKERS AI ERROR:', error.message);
+
+      const raw = String(
+        error?.message || error || "Unknown error"
+      );
+
+      const detail = raw
+        .split(env.PILOT_TOKEN).join("[REDACTED]")
+        .replace(/Bearer\s+\S+/gi, "[REDACTED]")
+        .slice(0, 500);
+
+      console.error("AI_DIAGNOSTIC_V12", {
+        model: MODEL,
+        detail
+      });
 
       return out({
-        error: 'AI gagal memproses tugas. Periksa Cloudflare Live Logs.'
+        version: VERSION,
+        error: "Workers AI Error: " + detail
       }, 502);
     }
   }

@@ -8,7 +8,7 @@ const roles = {
   analyst: 'Analisis headcount, turnover dan reporting'
 };
 
-const MODEL = '@cf/meta/llama-3.1-8b-instruct-fast';
+const MODEL = '@cf/meta/llama-3.3-70b-instruct-fp8-fast';
 
 export default {
   async fetch(request, env) {
